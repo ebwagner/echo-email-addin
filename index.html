@@ -11,7 +11,7 @@
         .header { padding: 10px 14px; background: linear-gradient(135deg, #0078d4, #106ebe); color: white; border-radius: 6px; margin-bottom: 12px; }
         .header h3 { font-size: 16px; font-weight: 600; }
         .options { display: flex; flex-direction: column; gap: 8px; }
-        .option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; }
+        .option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; transition: all 0.15s; }
         .option:hover { background: #f5f5f5; border-color: #0078d4; }
         .option-icon { font-size: 20px; }
         .option-text { display: flex; flex-direction: column; }
@@ -19,6 +19,19 @@
         .option-sublabel { font-size: 12px; color: #605e5c; }
         #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
         .success { background: #dff6dd; color: #107c10; }
+
+        /* Custom picker styles */
+        .custom-picker { display: none; padding: 12px; border: 1px solid #0078d4; border-radius: 6px; background: white; margin-top: 8px; }
+        .custom-picker.show { display: block; }
+        .custom-picker label { display: block; font-size: 12px; color: #605e5c; margin-bottom: 4px; }
+        .custom-picker input { width: 100%; padding: 8px; border: 1px solid #e0e0e0; border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
+        .custom-picker input:focus { outline: none; border-color: #0078d4; }
+        .picker-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+        .btn { padding: 8px 16px; border-radius: 4px; font-size: 14px; cursor: pointer; border: none; }
+        .btn-primary { background: #0078d4; color: white; }
+        .btn-primary:hover { background: #106ebe; }
+        .btn-secondary { background: #f3f2f1; color: #323130; }
+        .btn-secondary:hover { background: #e1dfdd; }
     </style>
 </head>
 <body>
@@ -30,24 +43,43 @@
             <span class="option-icon">🌅</span>
             <div class="option-text">
                 <span class="option-label">Later Today</span>
-                <span class="option-sublabel">4:00 PM</span>
+                <span class="option-sublabel" id="later_today_time">4:00 PM</span>
             </div>
         </div>
         <div class="option" onclick="snooze('tomorrow')">
             <span class="option-icon">🌄</span>
             <div class="option-text">
                 <span class="option-label">Tomorrow</span>
-                <span class="option-sublabel">8:00 AM</span>
+                <span class="option-sublabel" id="tomorrow_time">8:00 AM</span>
             </div>
         </div>
         <div class="option" onclick="snooze('next_week')">
             <span class="option-icon">📅</span>
             <div class="option-text">
                 <span class="option-label">Next Week</span>
-                <span class="option-sublabel">Monday 8:00 AM</span>
+                <span class="option-sublabel" id="next_week_time">Monday 8:00 AM</span>
+            </div>
+        </div>
+        <div class="option" onclick="toggleCustomPicker()">
+            <span class="option-icon">📆</span>
+            <div class="option-text">
+                <span class="option-label">Pick a Date & Time</span>
+                <span class="option-sublabel">Choose a specific time</span>
             </div>
         </div>
     </div>
+
+    <div id="customPicker" class="custom-picker">
+        <label for="customDate">Date</label>
+        <input type="date" id="customDate">
+        <label for="customTime">Time</label>
+        <input type="time" id="customTime" value="09:00">
+        <div class="picker-buttons">
+            <button class="btn btn-secondary" onclick="toggleCustomPicker()">Cancel</button>
+            <button class="btn btn-primary" onclick="snoozeCustom()">Snooze</button>
+        </div>
+    </div>
+
     <div id="status">Loading...</div>
 
     <script>
@@ -61,8 +93,64 @@
             }
         }
 
+        function formatTime(date) {
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+
+        function formatDate(date) {
+            return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        }
+
+        function getSnoozeTime(option) {
+            var now = new Date();
+            var snoozeDate = new Date();
+
+            switch(option) {
+                case 'later_today':
+                    // 4:00 PM today, or 2 hours from now if past 2 PM
+                    snoozeDate.setHours(16, 0, 0, 0);
+                    if (now.getHours() >= 14) {
+                        snoozeDate = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+                    }
+                    break;
+                case 'tomorrow':
+                    // 8:00 AM tomorrow
+                    snoozeDate.setDate(snoozeDate.getDate() + 1);
+                    snoozeDate.setHours(8, 0, 0, 0);
+                    break;
+                case 'next_week':
+                    // Next Monday 8:00 AM
+                    var daysUntilMonday = (8 - now.getDay()) % 7 || 7;
+                    snoozeDate.setDate(snoozeDate.getDate() + daysUntilMonday);
+                    snoozeDate.setHours(8, 0, 0, 0);
+                    break;
+            }
+            return snoozeDate;
+        }
+
+        function updateTimeLabels() {
+            var laterToday = getSnoozeTime('later_today');
+            var tomorrow = getSnoozeTime('tomorrow');
+            var nextWeek = getSnoozeTime('next_week');
+
+            document.getElementById('later_today_time').textContent = formatTime(laterToday);
+            document.getElementById('tomorrow_time').textContent = formatDate(tomorrow) + ', ' + formatTime(tomorrow);
+            document.getElementById('next_week_time').textContent = formatDate(nextWeek) + ', ' + formatTime(nextWeek);
+
+            // Set default custom date to tomorrow
+            var tomorrowStr = tomorrow.toISOString().split('T')[0];
+            document.getElementById('customDate').value = tomorrowStr;
+            document.getElementById('customDate').min = new Date().toISOString().split('T')[0];
+        }
+
+        function toggleCustomPicker() {
+            var picker = document.getElementById('customPicker');
+            picker.classList.toggle('show');
+        }
+
         Office.onReady(function(info) {
             statusEl = document.getElementById('status');
+            updateTimeLabels();
 
             if (info.host === Office.HostType.Outlook) {
                 mailboxItem = Office.context.mailbox.item;
@@ -81,18 +169,39 @@
             }
 
             var subject = mailboxItem.subject;
-            var itemId = mailboxItem.itemId;
+            var snoozeTime = getSnoozeTime(option);
 
-            var optionLabels = {
-                'later_today': 'Later Today (4:00 PM)',
-                'tomorrow': 'Tomorrow (8:00 AM)',
-                'next_week': 'Next Week (Monday 8:00 AM)'
-            };
-
-            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + optionLabels[option], true);
+            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime), true);
 
             // TODO: Send to backend API to actually schedule the snooze
-            // For now, just showing confirmation
+        }
+
+        function snoozeCustom() {
+            if (!mailboxItem) {
+                log('Error: No email selected');
+                return;
+            }
+
+            var dateVal = document.getElementById('customDate').value;
+            var timeVal = document.getElementById('customTime').value;
+
+            if (!dateVal || !timeVal) {
+                log('Please select both date and time.');
+                return;
+            }
+
+            var subject = mailboxItem.subject;
+            var snoozeTime = new Date(dateVal + 'T' + timeVal);
+
+            if (snoozeTime <= new Date()) {
+                log('Please select a future date and time.');
+                return;
+            }
+
+            toggleCustomPicker();
+            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime), true);
+
+            // TODO: Send to backend API to actually schedule the snooze
         }
     </script>
 </body>
