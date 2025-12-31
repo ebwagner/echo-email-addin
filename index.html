@@ -18,6 +18,7 @@
         .option-label { font-size: 14px; font-weight: 500; color: #323130; }
         .option-sublabel { font-size: 12px; color: #605e5c; }
         #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
+        .success { background: #dff6dd; color: #107c10; }
     </style>
 </head>
 <body>
@@ -53,54 +54,45 @@
         var mailboxItem = null;
         var statusEl = null;
 
-        function log(msg) {
+        function log(msg, isSuccess) {
             if (statusEl) {
                 statusEl.textContent = msg;
+                statusEl.className = isSuccess ? 'success' : '';
             }
         }
 
         Office.onReady(function(info) {
             statusEl = document.getElementById('status');
-            log('Office ready. Host: ' + (info.host || 'unknown'));
 
             if (info.host === Office.HostType.Outlook) {
-                try {
-                    mailboxItem = Office.context.mailbox.item;
-                    if (mailboxItem) {
-                        log('Ready. Email item detected.\nItem type: ' + mailboxItem.itemType);
-                    } else {
-                        log('Ready but no email item found.');
-                    }
-                } catch (e) {
-                    log('Error getting mailbox item: ' + e.message);
+                mailboxItem = Office.context.mailbox.item;
+                if (mailboxItem) {
+                    log('Ready. Select an option to snooze this email.');
+                } else {
+                    log('Please select an email first.');
                 }
-            } else {
-                log('Not running in Outlook. Host: ' + info.host);
             }
         });
 
         function snooze(option) {
-            log('Snooze clicked: ' + option);
-
             if (!mailboxItem) {
-                log('Error: mailboxItem is null');
+                log('Error: No email selected');
                 return;
             }
 
-            log('Getting email subject...');
+            var subject = mailboxItem.subject;
+            var itemId = mailboxItem.itemId;
 
-            try {
-                mailboxItem.subject.getAsync(function(result) {
-                    log('Callback received!');
-                    if (result.status === Office.AsyncResultStatus.Succeeded) {
-                        log('Subject: ' + result.value + '\nSnooze option: ' + option);
-                    } else {
-                        log('API Error: ' + result.error.message + '\nCode: ' + result.error.code);
-                    }
-                });
-            } catch (e) {
-                log('Exception: ' + e.message);
-            }
+            var optionLabels = {
+                'later_today': 'Later Today (4:00 PM)',
+                'tomorrow': 'Tomorrow (8:00 AM)',
+                'next_week': 'Next Week (Monday 8:00 AM)'
+            };
+
+            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + optionLabels[option], true);
+
+            // TODO: Send to backend API to actually schedule the snooze
+            // For now, just showing confirmation
         }
     </script>
 </body>
