@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Echo for Email</title>
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'Segoe UI', sans-serif; padding: 12px; background: #fafafa; }
@@ -13,12 +14,15 @@
         .options { display: flex; flex-direction: column; gap: 8px; }
         .option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; transition: all 0.15s; }
         .option:hover { background: #f5f5f5; border-color: #0078d4; }
+        .option.disabled { opacity: 0.5; cursor: not-allowed; }
         .option-icon { font-size: 20px; }
         .option-text { display: flex; flex-direction: column; }
         .option-label { font-size: 14px; font-weight: 500; color: #323130; }
         .option-sublabel { font-size: 12px; color: #605e5c; }
         #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
-        .success { background: #dff6dd; color: #107c10; }
+        .success { background: #dff6dd !important; color: #107c10; }
+        .error { background: #fde7e9 !important; color: #a80000; }
+        .loading { background: #fff4ce !important; color: #797673; }
 
         /* Custom picker styles */
         .custom-picker { display: none; padding: 12px; border: 1px solid #0078d4; border-radius: 6px; background: white; margin-top: 8px; }
@@ -32,13 +36,24 @@
         .btn-primary:hover { background: #106ebe; }
         .btn-secondary { background: #f3f2f1; color: #323130; }
         .btn-secondary:hover { background: #e1dfdd; }
+
+        /* Sign-in prompt */
+        .signin-prompt { display: none; padding: 16px; text-align: center; background: #fff4ce; border-radius: 6px; margin-bottom: 12px; }
+        .signin-prompt.show { display: block; }
+        .signin-prompt p { margin-bottom: 12px; color: #323130; }
     </style>
 </head>
 <body>
     <div class="header">
         <h3>Snooze Email</h3>
     </div>
-    <div class="options">
+
+    <div id="signinPrompt" class="signin-prompt">
+        <p>Please sign in to enable email snoozing</p>
+        <button class="btn btn-primary" onclick="signIn()">Sign In with Microsoft</button>
+    </div>
+
+    <div class="options" id="optionsContainer">
         <div class="option" onclick="snooze('later_today')">
             <span class="option-icon">🌅</span>
             <div class="option-text">
@@ -83,13 +98,26 @@
     <div id="status">Loading...</div>
 
     <script>
+        // Configuration
+        var CONFIG = {
+            clientId: 'f3eecdb1-43f0-4dad-bde3-0465c33f91e3',
+            tenantId: '70028790-a995-4d23-b464-29f8e5ca3438',
+            // Use localhost for dev, will be updated for production
+            backendUrl: 'http://localhost:7072',
+            scopes: ['https://graph.microsoft.com/Mail.ReadWrite', 'https://graph.microsoft.com/User.Read']
+        };
+
         var mailboxItem = null;
         var statusEl = null;
+        var msalInstance = null;
+        var currentAccount = null;
+        var accessToken = null;
+        var isProcessing = false;
 
-        function log(msg, isSuccess) {
+        function log(msg, type) {
             if (statusEl) {
                 statusEl.textContent = msg;
-                statusEl.className = isSuccess ? 'success' : '';
+                statusEl.className = type || '';
             }
         }
 
@@ -107,19 +135,16 @@
 
             switch(option) {
                 case 'later_today':
-                    // 4:00 PM today, or 2 hours from now if past 2 PM
                     snoozeDate.setHours(16, 0, 0, 0);
                     if (now.getHours() >= 14) {
                         snoozeDate = new Date(now.getTime() + 2 * 60 * 60 * 1000);
                     }
                     break;
                 case 'tomorrow':
-                    // 8:00 AM tomorrow
                     snoozeDate.setDate(snoozeDate.getDate() + 1);
                     snoozeDate.setHours(8, 0, 0, 0);
                     break;
                 case 'next_week':
-                    // Next Monday 8:00 AM
                     var daysUntilMonday = (8 - now.getDay()) % 7 || 7;
                     snoozeDate.setDate(snoozeDate.getDate() + daysUntilMonday);
                     snoozeDate.setHours(8, 0, 0, 0);
@@ -137,7 +162,6 @@
             document.getElementById('tomorrow_time').textContent = formatDate(tomorrow) + ', ' + formatTime(tomorrow);
             document.getElementById('next_week_time').textContent = formatDate(nextWeek) + ', ' + formatTime(nextWeek);
 
-            // Set default custom date to tomorrow
             var tomorrowStr = tomorrow.toISOString().split('T')[0];
             document.getElementById('customDate').value = tomorrowStr;
             document.getElementById('customDate').min = new Date().toISOString().split('T')[0];
@@ -148,37 +172,190 @@
             picker.classList.toggle('show');
         }
 
-        Office.onReady(function(info) {
-            statusEl = document.getElementById('status');
-            updateTimeLabels();
+        // Initialize MSAL
+        function initializeMsal() {
+            var msalConfig = {
+                auth: {
+                    clientId: CONFIG.clientId,
+                    authority: 'https://login.microsoftonline.com/' + CONFIG.tenantId,
+                    redirectUri: window.location.origin + window.location.pathname
+                },
+                cache: {
+                    cacheLocation: 'localStorage',
+                    storeAuthStateInCookie: false
+                }
+            };
 
-            if (info.host === Office.HostType.Outlook) {
-                mailboxItem = Office.context.mailbox.item;
-                if (mailboxItem) {
-                    log('Ready. Select an option to snooze this email.');
+            msalInstance = new msal.PublicClientApplication(msalConfig);
+
+            // Check for existing accounts
+            var accounts = msalInstance.getAllAccounts();
+            if (accounts.length > 0) {
+                currentAccount = accounts[0];
+                return getTokenSilent();
+            }
+            return Promise.resolve(null);
+        }
+
+        // Get token silently (from cache or refresh)
+        function getTokenSilent() {
+            if (!msalInstance || !currentAccount) {
+                return Promise.resolve(null);
+            }
+
+            var tokenRequest = {
+                scopes: CONFIG.scopes,
+                account: currentAccount
+            };
+
+            return msalInstance.acquireTokenSilent(tokenRequest)
+                .then(function(response) {
+                    accessToken = response.accessToken;
+                    return response.accessToken;
+                })
+                .catch(function(error) {
+                    console.warn('Silent token acquisition failed:', error);
+                    if (error.name === 'InteractionRequiredAuthError') {
+                        return signIn();
+                    }
+                    return null;
+                });
+        }
+
+        // Sign in with popup
+        function signIn() {
+            if (!msalInstance) {
+                log('Authentication not initialized', 'error');
+                return Promise.resolve(null);
+            }
+
+            var loginRequest = {
+                scopes: CONFIG.scopes
+            };
+
+            return msalInstance.loginPopup(loginRequest)
+                .then(function(response) {
+                    currentAccount = response.account;
+                    accessToken = response.accessToken;
+                    document.getElementById('signinPrompt').classList.remove('show');
+                    log('Signed in. Select an option to snooze.');
+                    return response.accessToken;
+                })
+                .catch(function(error) {
+                    console.error('Login failed:', error);
+                    log('Sign-in failed: ' + error.message, 'error');
+                    return null;
+                });
+        }
+
+        // Show sign-in prompt if not authenticated
+        function showSignInPrompt() {
+            document.getElementById('signinPrompt').classList.add('show');
+        }
+
+        // Get email ID in REST/Graph format
+        function getGraphEmailId() {
+            return new Promise(function(resolve, reject) {
+                if (!mailboxItem || !mailboxItem.itemId) {
+                    reject(new Error('No email selected'));
+                    return;
+                }
+
+                // Convert EWS ID to REST ID
+                if (Office.context.mailbox.convertToRestId) {
+                    try {
+                        var restId = Office.context.mailbox.convertToRestId(
+                            mailboxItem.itemId,
+                            Office.MailboxEnums.RestVersion.v2_0
+                        );
+                        resolve(restId);
+                    } catch (e) {
+                        // If conversion fails, use the item ID as-is
+                        resolve(mailboxItem.itemId);
+                    }
                 } else {
-                    log('Please select an email first.');
+                    resolve(mailboxItem.itemId);
+                }
+            });
+        }
+
+        // Call backend API to create snooze
+        async function createSnoozeOnBackend(emailId, unsnoozeAt) {
+            if (!accessToken) {
+                var token = await getTokenSilent();
+                if (!token) {
+                    showSignInPrompt();
+                    throw new Error('Please sign in first');
                 }
             }
-        });
 
-        function snooze(option) {
+            var response = await fetch(CONFIG.backendUrl + '/api/snooze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + accessToken
+                },
+                body: JSON.stringify({
+                    emailId: emailId,
+                    unsnoozeAt: unsnoozeAt.toISOString(),
+                    markUnread: true
+                })
+            });
+
+            if (!response.ok) {
+                var errorData = await response.json().catch(function() { return {}; });
+                throw new Error(errorData.error || 'Failed to snooze email');
+            }
+
+            return response.json();
+        }
+
+        // Main snooze function
+        async function snooze(option) {
             if (!mailboxItem) {
-                log('Error: No email selected');
+                log('Error: No email selected', 'error');
                 return;
             }
 
+            if (isProcessing) {
+                return;
+            }
+
+            isProcessing = true;
             var subject = mailboxItem.subject;
             var snoozeTime = getSnoozeTime(option);
 
-            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime), true);
+            log('Snoozing email...', 'loading');
 
-            // TODO: Send to backend API to actually schedule the snooze
+            try {
+                var emailId = await getGraphEmailId();
+                var result = await createSnoozeOnBackend(emailId, snoozeTime);
+
+                log('✓ Snoozed!\n\n"' + subject + '"\n\n' + result.message, 'success');
+            } catch (error) {
+                console.error('Snooze failed:', error);
+
+                if (error.message === 'Please sign in first') {
+                    log('Please sign in to snooze emails', 'error');
+                } else if (error.message.includes('Failed to fetch')) {
+                    // Backend not reachable - show local-only message
+                    log('✓ Snoozed (local preview)\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime) + '\n\n(Backend not connected)', 'success');
+                } else {
+                    log('Error: ' + error.message, 'error');
+                }
+            } finally {
+                isProcessing = false;
+            }
         }
 
-        function snoozeCustom() {
+        // Custom snooze function
+        async function snoozeCustom() {
             if (!mailboxItem) {
-                log('Error: No email selected');
+                log('Error: No email selected', 'error');
+                return;
+            }
+
+            if (isProcessing) {
                 return;
             }
 
@@ -186,23 +363,77 @@
             var timeVal = document.getElementById('customTime').value;
 
             if (!dateVal || !timeVal) {
-                log('Please select both date and time.');
+                log('Please select both date and time.', 'error');
                 return;
             }
 
-            var subject = mailboxItem.subject;
             var snoozeTime = new Date(dateVal + 'T' + timeVal);
 
             if (snoozeTime <= new Date()) {
-                log('Please select a future date and time.');
+                log('Please select a future date and time.', 'error');
                 return;
             }
 
+            isProcessing = true;
+            var subject = mailboxItem.subject;
             toggleCustomPicker();
-            log('✓ Snoozed!\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime), true);
 
-            // TODO: Send to backend API to actually schedule the snooze
+            log('Snoozing email...', 'loading');
+
+            try {
+                var emailId = await getGraphEmailId();
+                var result = await createSnoozeOnBackend(emailId, snoozeTime);
+
+                log('✓ Snoozed!\n\n"' + subject + '"\n\n' + result.message, 'success');
+            } catch (error) {
+                console.error('Snooze failed:', error);
+
+                if (error.message === 'Please sign in first') {
+                    log('Please sign in to snooze emails', 'error');
+                } else if (error.message.includes('Failed to fetch')) {
+                    log('✓ Snoozed (local preview)\n\n"' + subject + '"\n\nWill return: ' + formatDate(snoozeTime) + ' at ' + formatTime(snoozeTime) + '\n\n(Backend not connected)', 'success');
+                } else {
+                    log('Error: ' + error.message, 'error');
+                }
+            } finally {
+                isProcessing = false;
+            }
         }
+
+        // Initialize the add-in
+        Office.onReady(function(info) {
+            statusEl = document.getElementById('status');
+            updateTimeLabels();
+
+            if (info.host === Office.HostType.Outlook) {
+                mailboxItem = Office.context.mailbox.item;
+
+                // Initialize MSAL
+                initializeMsal()
+                    .then(function(token) {
+                        if (mailboxItem) {
+                            if (token) {
+                                log('Ready. Select an option to snooze this email.');
+                            } else {
+                                log('Ready. Sign in to enable full functionality.');
+                                showSignInPrompt();
+                            }
+                        } else {
+                            log('Please select an email first.');
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error('MSAL init error:', error);
+                        if (mailboxItem) {
+                            log('Ready. Select an option to snooze.');
+                        } else {
+                            log('Please select an email first.');
+                        }
+                    });
+            } else {
+                log('Please open this add-in in Outlook.');
+            }
+        });
     </script>
 </body>
 </html>
