@@ -1,19 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Echo for Email</title>
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 12px; background: #fafafa; }
+        .header { padding: 10px 14px; background: linear-gradient(135deg, #0078d4, #106ebe); color: white; border-radius: 6px; margin-bottom: 12px; }
+        .header h3 { font-size: 16px; font-weight: 600; }
+        .options { display: flex; flex-direction: column; gap: 8px; }
+        .option { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; }
+        .option:hover { background: #f5f5f5; border-color: #0078d4; }
+        .option-icon { font-size: 20px; }
+        .option-text { display: flex; flex-direction: column; }
+        .option-label { font-size: 14px; font-weight: 500; color: #323130; }
+        .option-sublabel { font-size: 12px; color: #605e5c; }
+        #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h3>Snooze Email</h3>
+    </div>
+    <div class="options">
+        <div class="option" onclick="snooze('later_today')">
+            <span class="option-icon">🌅</span>
+            <div class="option-text">
+                <span class="option-label">Later Today</span>
+                <span class="option-sublabel">4:00 PM</span>
+            </div>
+        </div>
+        <div class="option" onclick="snooze('tomorrow')">
+            <span class="option-icon">🌄</span>
+            <div class="option-text">
+                <span class="option-label">Tomorrow</span>
+                <span class="option-sublabel">8:00 AM</span>
+            </div>
+        </div>
+        <div class="option" onclick="snooze('next_week')">
+            <span class="option-icon">📅</span>
+            <div class="option-text">
+                <span class="option-label">Next Week</span>
+                <span class="option-sublabel">Monday 8:00 AM</span>
+            </div>
+        </div>
+    </div>
+    <div id="status">Loading...</div>
+
     <script>
-      window.onerror = function(msg, url, line, col, error) {
-        document.body.innerHTML = '<pre style="color:red;padding:20px;">Error: ' + msg + '\nLine: ' + line + '\nCol: ' + col + '</pre>';
-        return true;
-      };
+        var mailboxItem = null;
+
+        Office.onReady(function(info) {
+            document.getElementById('status').textContent = 'Ready - Host: ' + (info.host || 'unknown');
+            if (info.host === Office.HostType.Outlook) {
+                mailboxItem = Office.context.mailbox.item;
+            }
+        });
+
+        function snooze(option) {
+            var status = document.getElementById('status');
+            if (!mailboxItem) {
+                status.textContent = 'Error: No email selected';
+                return;
+            }
+            status.textContent = 'Snoozing: ' + option + '...';
+
+            mailboxItem.subject.getAsync(function(result) {
+                if (result.status === Office.AsyncResultStatus.Succeeded) {
+                    status.textContent = 'Snoozed "' + result.value + '" until ' + option;
+                } else {
+                    status.textContent = 'Error: ' + result.error.message;
+                }
+            });
+        }
     </script>
-  </head>
-  <body>
-    <div id="root">Loading...</div>
-    <script src="/echo-email-addin/assets/index.js"></script>
-  </body>
+</body>
 </html>
