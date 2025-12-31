@@ -17,7 +17,7 @@
         .option-text { display: flex; flex-direction: column; }
         .option-label { font-size: 14px; font-weight: 500; color: #323130; }
         .option-sublabel { font-size: 12px; color: #605e5c; }
-        #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; }
+        #status { padding: 10px; margin-top: 12px; background: #e7f3ff; border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
     </style>
 </head>
 <body>
@@ -51,29 +51,56 @@
 
     <script>
         var mailboxItem = null;
+        var statusEl = null;
+
+        function log(msg) {
+            if (statusEl) {
+                statusEl.textContent = msg;
+            }
+        }
 
         Office.onReady(function(info) {
-            document.getElementById('status').textContent = 'Ready - Host: ' + (info.host || 'unknown');
+            statusEl = document.getElementById('status');
+            log('Office ready. Host: ' + (info.host || 'unknown'));
+
             if (info.host === Office.HostType.Outlook) {
-                mailboxItem = Office.context.mailbox.item;
+                try {
+                    mailboxItem = Office.context.mailbox.item;
+                    if (mailboxItem) {
+                        log('Ready. Email item detected.\nItem type: ' + mailboxItem.itemType);
+                    } else {
+                        log('Ready but no email item found.');
+                    }
+                } catch (e) {
+                    log('Error getting mailbox item: ' + e.message);
+                }
+            } else {
+                log('Not running in Outlook. Host: ' + info.host);
             }
         });
 
         function snooze(option) {
-            var status = document.getElementById('status');
+            log('Snooze clicked: ' + option);
+
             if (!mailboxItem) {
-                status.textContent = 'Error: No email selected';
+                log('Error: mailboxItem is null');
                 return;
             }
-            status.textContent = 'Snoozing: ' + option + '...';
 
-            mailboxItem.subject.getAsync(function(result) {
-                if (result.status === Office.AsyncResultStatus.Succeeded) {
-                    status.textContent = 'Snoozed "' + result.value + '" until ' + option;
-                } else {
-                    status.textContent = 'Error: ' + result.error.message;
-                }
-            });
+            log('Getting email subject...');
+
+            try {
+                mailboxItem.subject.getAsync(function(result) {
+                    log('Callback received!');
+                    if (result.status === Office.AsyncResultStatus.Succeeded) {
+                        log('Subject: ' + result.value + '\nSnooze option: ' + option);
+                    } else {
+                        log('API Error: ' + result.error.message + '\nCode: ' + result.error.code);
+                    }
+                });
+            } catch (e) {
+                log('Exception: ' + e.message);
+            }
         }
     </script>
 </body>
